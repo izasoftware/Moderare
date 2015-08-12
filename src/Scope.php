@@ -164,7 +164,9 @@ class Scope
 
         if (!$this->success) {
             foreach ($rawIncludedData as $key => $bag) {
-                $rawData->add('includes', $bag);
+                if (!empty($bag)) {
+                    $rawData->add('includes', $bag);
+                }
             }
         }
 
