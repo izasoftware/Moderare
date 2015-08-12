@@ -2,7 +2,6 @@
 
 namespace Iza\Moderare;
 
-use App\Validators\ValidatorAbstract;
 use InvalidArgumentException;
 use Iza\Moderare\Resource\Collection;
 use Iza\Moderare\Resource\Item;
@@ -38,6 +37,11 @@ class Scope
     protected $resource;
 
     /**
+     * @var bool
+     */
+    protected $success = false;
+
+    /**
      * @var array
      */
     protected $parentScopes = array();
@@ -66,11 +70,11 @@ class Scope
      * @param string $scopeIdentifier
      * @param ResourceInterface $resource
      *
-     * @return \League\Fractal\Scope
+     * @return \Iza\Moderare\Scope
      */
     public function embedChildScope($scopeIdentifier, $resource)
     {
-        return $this->manager->createData($resource, $scopeIdentifier, $this);
+        return $this->manager->validateData($resource, $scopeIdentifier, $this);
     }
 
     /**
@@ -118,33 +122,6 @@ class Scope
     }
 
     /**
-     * Is Requested.
-     *
-     * Check if - in relation to the current scope - there are children in the request.
-     *
-     * @internal
-     *
-     * @param string $checkScopeSegment
-     *
-     * @return bool Returns the new number of elements in the array.
-     */
-    public function isPosted($checkScopeSegment)
-    {
-        if ($this->parentScopes) {
-            $scopeArray = array_slice($this->parentScopes, 1);
-            array_push($scopeArray, $this->scopeIdentifer, $checkScopeSegment);
-        } else {
-            $scopeArray = array($checkScopeSegment);
-        }
-
-        $scopeString = implode('.', (array)$scopeArray);
-
-        $checkAgainstArray = $this->manager->getRequestedIncludes();
-
-        return in_array($scopeString, $checkAgainstArray);
-    }
-
-    /**
      * Push Parent Scope.
      *
      * Push a scope identifier into parentScopes
@@ -183,29 +160,15 @@ class Scope
      */
     public function validate()
     {
-        list($rawData, $rawIncludedData) = $this->executeResourceTransformers();
+        list($rawData, $rawIncludedData) = $this->execute();
 
-        $serializer = $this->manager->getSerializer();
-
-        $data = $this->serializeResource($serializer, $rawData);
-
-        // If the serializer wants the includes to be side-loaded then we'll
-        // serialize the included data and merge it with the data.
-        if ($serializer->sideloadIncludes()) {
-            $includedData = $serializer->includedData($this->resource, $rawIncludedData);
-
-            $data = array_merge($data, $includedData);
+        if (!$this->success) {
+            foreach ($rawIncludedData as $key => $bag) {
+                $rawData->add('includes', $bag);
+            }
         }
 
-        if ($this->resource instanceof Collection) {
-
-        }
-
-
-        // Pull out all of OUR metadata and any custom meta data to merge with the main level data
-        $meta = $serializer->meta($this->resource->getMeta());
-
-        return array_merge($data, $meta);
+        return $this->success ? true : $rawData;
     }
 
     /**
@@ -217,16 +180,16 @@ class Scope
      */
     protected function execute()
     {
-        $transformer = $this->resource->getValidator();
+        $validator = $this->resource->getValidator();
         $data = $this->resource->getData();
 
         $transformedData = $includedData = array();
 
         if ($this->resource instanceof Item) {
-            list($transformedData, $includedData[]) = $this->fireValidator($transformer, $data);
+            list($transformedData, $includedData[]) = $this->fireValidator($validator, $data);
         } elseif ($this->resource instanceof Collection) {
             foreach ($data as $value) {
-                list($transformedData[], $includedData[]) = $this->fireValidator($transformer, $value);
+                list($transformedData[], $includedData[]) = $this->fireValidator($validator, $value);
             }
         } else {
             throw new InvalidArgumentException(
@@ -246,23 +209,56 @@ class Scope
      * @param ValidatorAbstract|callable $validator
      * @param mixed $data
      *
-     * @return array
+     * @return MessageBag|bool
      */
     protected function fireValidator($validator, $data)
     {
         $includedValidation = array();
+        $output = null;
 
         if (is_callable($validator)) {
-            $mainValidation = call_user_func($validator, $data);
+            try {
+                $output = call_user_func($validator, $data);
+            } catch (\Exception $e) {
+                $output = new MessageBag([$e->getMessage()]);
+            }
+        } elseif ($validator instanceof ValidatorAbstract) {
+            try {
+                $output = $validator->validate($data);
+            } catch (\Exception $e) {
+                $output = new MessageBag([$e->getMessage()]);
+            }
+        }
+
+        if (is_string($output)) {
+            $output = new MessageBag([$output]);
+        }
+
+        if (is_array($output)) {
+            $output = new MessageBag($output);
+        }
+
+        if (is_bool($output) && $output) {
+            $this->success = true;
+            $output = new  MessageBag();
         } else {
-            $mainValidation = $validator->validate($data);
+            $this->failValidation();
         }
 
         if ($this->transformerHasIncludes($validator)) {
             $includedValidation = $this->fireIncludedValidators($validator, $data);
         }
 
-        return array($mainValidation, $includedValidation);
+        return array($output, $includedValidation);
+    }
+
+    public function failValidation()
+    {
+        $this->success = false;
+
+        foreach ($this->parentScopes as $parent) {
+            $parent->failValidation();
+        }
     }
 
     /**
@@ -287,7 +283,7 @@ class Scope
      *
      * @internal
      *
-     * @param ValidatorAbstract|callable $transformer
+     * @param ValidatorAbstract|callable $validator
      *
      * @return bool
      */

@@ -53,7 +53,7 @@ class Engine
         if ($parentScopeInstance !== null) {
             // This will be the new children list of parents (parents parents, plus the parent)
             $scopeArray = $parentScopeInstance->getParentScopes();
-            $scopeArray[] = $parentScopeInstance->getScopeIdentifier();
+            $scopeArray[] = $parentScopeInstance;
 
             $scopeInstance->setParentScopes($scopeArray);
         }

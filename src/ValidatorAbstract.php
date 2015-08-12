@@ -68,11 +68,12 @@ abstract class ValidatorAbstract
      *
      * @return array
      */
-    private function figureOutWhichIncludes(Scope $scope)
+    private function figureOutWhichIncludes(Scope $scope, $data)
     {
         $includes = $this->getDefaultIncludes();
         foreach ($this->getAvailableIncludes() as $include) {
-            if ($scope->isRequested($include)) {
+            //if the given resource key is added to the data fire the include
+            if (array_key_exists($include, $data)) {
                 $includes[] = $include;
             }
         }
@@ -95,7 +96,7 @@ abstract class ValidatorAbstract
     {
         $includedData = array();
 
-        $includes = $this->figureOutWhichIncludes($scope);
+        $includes = $this->figureOutWhichIncludes($scope, $data);
 
         foreach ($includes as $include) {
             $includedData = $this->includeResourceIfAvailable(
@@ -130,7 +131,7 @@ abstract class ValidatorAbstract
         if ($resource = $this->callIncludeMethod($scope, $include, $data)) {
             $childScope = $scope->embedChildScope($include, $resource);
 
-            $includedData[$include] = $childScope->toArray();
+            $includedData[$include] = $childScope->validate();
         }
 
         return $includedData;
@@ -154,10 +155,12 @@ abstract class ValidatorAbstract
         $scopeIdentifier = $scope->getIdentifier($includeName);
         $params = $scope->getManager()->getIncludeParams($scopeIdentifier);
 
-        // Check if the method name actually exists
-        $methodName = 'validate' . str_replace(' ', '', ucwords(str_replace('_', ' ', $includeName)));
+        $dataScope = $data[$includeName];
 
-        $resource = call_user_func(array($this, $methodName), $data, $params);
+        // Check if the method name actually exists
+        $methodName = 'include' . str_replace(' ', '', ucwords(str_replace('_', ' ', $includeName)));
+
+        $resource = call_user_func(array($this, $methodName), $dataScope, $params);
 
         if ($resource === null) {
             return false;
@@ -245,4 +248,10 @@ abstract class ValidatorAbstract
     {
         return new Collection($data, $transformer, $resourceKey);
     }
+
+    /**
+     * @param $data
+     * @return mixed
+     */
+    abstract public function validate($data);
 }
